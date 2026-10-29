@@ -1,0 +1,74 @@
+@IsTest
+public class SEIU99SyncTestDataFactory {
+
+    public static Account createAccount(String name) {
+
+        Account acc = new Account(
+            Name = name
+        );
+
+        insert acc;
+        return acc;
+    }
+
+
+    public static CVSR__Worksite__c createWorksite(
+        String name,
+        Id accountId
+    ) {
+
+        CVSR__Worksite__c ws =
+            new CVSR__Worksite__c(
+                Name = name,
+                CVSR__PrimaryEmployerAccountId__c =
+                    accountId
+            );
+
+        insert ws;
+        return ws;
+    }
+
+
+    public static Contact createLocalMember() {
+
+        Id rtId =
+            Schema.SObjectType.Contact
+                .getRecordTypeInfosByDeveloperName()
+                .get('Local_Member')
+                .getRecordTypeId();
+
+        Contact con = new Contact(
+            LastName = 'Test Local Member',
+            RecordTypeId = rtId
+        );
+
+        insert con;
+        return con;
+    }
+
+
+    public static User createUser(String key) {
+
+        String unique =
+            key + String.valueOf(
+                DateTime.now().getTime()
+            );
+
+        User u = new User(
+            FirstName = 'Test',
+            LastName = 'Owner',
+            Alias = 'towner',
+            Email = unique + '@example.com',
+            Username = unique + '@example.com',
+            CommunityNickname = unique,
+            TimeZoneSidKey = 'America/Los_Angeles',
+            LocaleSidKey = 'en_US',
+            EmailEncodingKey = 'UTF-8',
+            LanguageLocaleKey = 'en_US',
+            ProfileId = UserInfo.getProfileId()
+        );
+
+        insert u;
+        return u;
+    }
+}
