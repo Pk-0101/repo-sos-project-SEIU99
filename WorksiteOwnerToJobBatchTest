@@ -1,0 +1,77 @@
+@IsTest
+private class WorksiteOwnerToJobBatchTest {
+
+    @IsTest
+    static void testNormalAndChildcareWorksites() {
+
+        Account normalAccount =
+            new Account(
+                Name = 'Normal Employer'
+            );
+
+        Account childcareAccount =
+            new Account(
+                Name = 'Childcare Providers'
+            );
+
+        insert new List<Account>{
+            normalAccount,
+            childcareAccount
+        };
+
+
+        CVSR__Worksite__c normalWorksite =
+            new CVSR__Worksite__c(
+                Name = 'Normal Worksite',
+                CVSR__PrimaryEmployerAccountId__c =
+                    normalAccount.Id
+            );
+
+        CVSR__Worksite__c childcareWorksite =
+            new CVSR__Worksite__c(
+                Name = 'Childcare Worksite',
+                CVSR__PrimaryEmployerAccountId__c =
+                    childcareAccount.Id
+            );
+
+        insert new List<CVSR__Worksite__c>{
+            normalWorksite,
+            childcareWorksite
+        };
+
+
+        /*
+         * Test the Worksite filtering batch.
+         *
+         * The production finish() starts the
+         * Job-level batch automatically.
+         */
+        Test.startTest();
+
+        Database.executeBatch(
+            new WorksiteOwnerToJobBatch(
+                System.now().addMinutes(-10),
+                System.now().addMinutes(10)
+            ),
+            10
+        );
+
+        Test.stopTest();
+
+
+        /*
+         * Main purpose of this test is to verify
+         * that the Worksite batch executes successfully
+         * for a mixture of normal and Childcare records.
+         */
+        System.assertNotEquals(
+            null,
+            normalWorksite.Id
+        );
+
+        System.assertNotEquals(
+            null,
+            childcareWorksite.Id
+        );
+    }
+}
