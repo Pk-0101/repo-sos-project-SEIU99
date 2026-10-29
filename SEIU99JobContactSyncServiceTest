@@ -1,0 +1,327 @@
+@IsTest
+private class SEIU99JobContactSyncServiceTest {
+
+    @IsTest
+    static void testSingleInactiveJobPrimary() {
+
+        Contact con =
+            SEIU99SyncTestDataFactory.createLocalMember();
+
+        CVSR__Job__c job =
+            new CVSR__Job__c(
+                CVSR__Worker__c = con.Id,
+                Active__c = false,
+                Last_Paid_Date__c = Date.today()
+            );
+
+        insert job;
+
+        List<CVSR__Job__c> jobs = [
+            SELECT
+                Id,
+                CVSR__Worker__c,
+                Active__c,
+                Last_Paid_Date__c,
+                LastModifiedDate
+            FROM CVSR__Job__c
+            WHERE CVSR__Worker__c = :con.Id
+        ];
+
+        Map<Id, CVSR__Job__c> result =
+            SEIU99JobContactSyncService.selectPrimaryJobs(jobs);
+
+        System.assertEquals(
+            job.Id,
+            result.get(con.Id).Id
+        );
+    }
+
+
+    @IsTest
+    static void testActivePreferredOverInactive() {
+
+        Contact con =
+            SEIU99SyncTestDataFactory.createLocalMember();
+
+        CVSR__Job__c inactiveJob =
+            new CVSR__Job__c(
+                CVSR__Worker__c = con.Id,
+                Active__c = false,
+                Last_Paid_Date__c = Date.today()
+            );
+
+        CVSR__Job__c activeJob =
+            new CVSR__Job__c(
+                CVSR__Worker__c = con.Id,
+                Active__c = true,
+                Last_Paid_Date__c =
+                    Date.today().addDays(-20)
+            );
+
+        insert new List<CVSR__Job__c>{
+            inactiveJob,
+            activeJob
+        };
+
+        List<CVSR__Job__c> jobs = [
+            SELECT
+                Id,
+                CVSR__Worker__c,
+                Active__c,
+                Last_Paid_Date__c,
+                LastModifiedDate
+            FROM CVSR__Job__c
+            WHERE CVSR__Worker__c = :con.Id
+            ORDER BY
+                Active__c DESC,
+                Last_Paid_Date__c DESC NULLS LAST,
+                LastModifiedDate DESC,
+                Id DESC
+        ];
+
+        Map<Id, CVSR__Job__c> result =
+            SEIU99JobContactSyncService.selectPrimaryJobs(jobs);
+
+        System.assertEquals(
+            activeJob.Id,
+            result.get(con.Id).Id,
+            'Active Job must win over Inactive Job.'
+        );
+    }
+
+
+    @IsTest
+    static void testLatestActiveJob() {
+
+        Contact con =
+            SEIU99SyncTestDataFactory.createLocalMember();
+
+        CVSR__Job__c oldJob =
+            new CVSR__Job__c(
+                CVSR__Worker__c = con.Id,
+                Active__c = true,
+                Last_Paid_Date__c =
+                    Date.today().addDays(-30)
+            );
+
+        CVSR__Job__c latestJob =
+            new CVSR__Job__c(
+                CVSR__Worker__c = con.Id,
+                Active__c = true,
+                Last_Paid_Date__c = Date.today()
+            );
+
+        insert new List<CVSR__Job__c>{
+            oldJob,
+            latestJob
+        };
+
+        List<CVSR__Job__c> jobs = [
+            SELECT
+                Id,
+                CVSR__Worker__c,
+                Active__c,
+                Last_Paid_Date__c,
+                LastModifiedDate
+            FROM CVSR__Job__c
+            WHERE CVSR__Worker__c = :con.Id
+            ORDER BY
+                Active__c DESC,
+                Last_Paid_Date__c DESC NULLS LAST,
+                LastModifiedDate DESC,
+                Id DESC
+        ];
+
+        Map<Id, CVSR__Job__c> result =
+            SEIU99JobContactSyncService.selectPrimaryJobs(jobs);
+
+        System.assertEquals(
+            latestJob.Id,
+            result.get(con.Id).Id
+        );
+    }
+
+
+    @IsTest
+    static void testLatestInactiveJob() {
+
+        Contact con =
+            SEIU99SyncTestDataFactory.createLocalMember();
+
+        CVSR__Job__c oldJob =
+            new CVSR__Job__c(
+                CVSR__Worker__c = con.Id,
+                Active__c = false,
+                Last_Paid_Date__c =
+                    Date.today().addDays(-30)
+            );
+
+        CVSR__Job__c latestJob =
+            new CVSR__Job__c(
+                CVSR__Worker__c = con.Id,
+                Active__c = false,
+                Last_Paid_Date__c = Date.today()
+            );
+
+        insert new List<CVSR__Job__c>{
+            oldJob,
+            latestJob
+        };
+
+        List<CVSR__Job__c> jobs = [
+            SELECT
+                Id,
+                CVSR__Worker__c,
+                Active__c,
+                Last_Paid_Date__c,
+                LastModifiedDate
+            FROM CVSR__Job__c
+            WHERE CVSR__Worker__c = :con.Id
+            ORDER BY
+                Active__c DESC,
+                Last_Paid_Date__c DESC NULLS LAST,
+                LastModifiedDate DESC,
+                Id DESC
+        ];
+
+        Map<Id, CVSR__Job__c> result =
+            SEIU99JobContactSyncService.selectPrimaryJobs(jobs);
+
+        System.assertEquals(
+            latestJob.Id,
+            result.get(con.Id).Id
+        );
+    }
+
+
+    @IsTest
+    static void testNullWorkerSkipped() {
+
+        CVSR__Job__c job =
+            new CVSR__Job__c(
+                CVSR__Worker__c = null,
+                Active__c = true
+            );
+
+        Map<Id, CVSR__Job__c> result =
+            SEIU99JobContactSyncService.selectPrimaryJobs(
+                    new List<CVSR__Job__c>{ job }
+                );
+
+        System.assertEquals(
+            0,
+            result.size()
+        );
+    }
+
+
+    @IsTest
+    static void testJobToContactMapping() {
+
+        Account employer =
+            SEIU99SyncTestDataFactory.createAccount('Mapping Employer');
+
+        CVSR__Worksite__c ws =
+            SEIU99SyncTestDataFactory.createWorksite(
+                    'Mapping Worksite',
+                    employer.Id
+                );
+
+        Contact con = new Contact();
+
+        CVSR__Job__c job =
+            new CVSR__Job__c(
+                OwnerId = UserInfo.getUserId(),
+                CVSR__Employer__c = employer.Id,
+                CVSR__Worksite__c = ws.Id,
+                Bargaining_Unit__c = 'BU-TEST',
+                CVSR__JOB_RE_HIRE_DT__c =
+                    Date.today().addYears(-1),
+                CVSR__JOB_SENIORITY_DT__c =
+                    Date.today().addYears(-5),
+                Last_Paid_Date__c = Date.today(),
+                COPE_Amount__c = 25,
+                Effective_Date_COPE__c =
+                    Date.today(),
+                Employee_ID__c = 'EMP001',
+                HourlyRate__c = 30,
+                CVSR__JOB_BASE_SALARY__c = 50000,
+                Daily_Hours__c = 8,
+                Job_Type__c = 'Full Time',
+                Status_Reason_Code__c = 'ACTIVE',
+                Worker_Type__c = 'Employee',
+                Worker_Sub_Type__c = 'Regular',
+                Hire_Date__c =
+                    Date.today().addYears(-5),
+                Leave_Notification_Date__c =
+                    Date.today()
+            );
+
+        SEIU99JobContactSyncService.mapJobToContact(con, job);
+
+        System.assertEquals(
+            employer.Id,
+            con.AccountId
+        );
+
+        System.assertEquals(
+            ws.Id,
+            con.Worksite__c
+        );
+
+        System.assertEquals(
+            'BU-TEST',
+            con.Bargaining_Unit__c
+        );
+
+        System.assertEquals(
+            Date.today(),
+            con.Paid_Through_Date_Start__c
+        );
+
+        System.assertEquals(
+            'EMP001',
+            con.Employee_ID__c
+        );
+
+        System.assertEquals(
+            30,
+            con.Hourly_Rate__c
+        );
+
+        System.assertEquals(
+            50000,
+            con.Wage_Rate__c
+        );
+
+        System.assertEquals(
+            8,
+            con.Daily_Hours__c
+        );
+
+        System.assertEquals(
+            'Full Time',
+            con.Job_Type__c
+        );
+
+        System.assertEquals(
+            'ACTIVE',
+            con.Status_Reason_Code__c
+        );
+
+        System.assertEquals(
+            'Employee',
+            con.Worker_Type__c
+        );
+
+        System.assertEquals(
+            'Regular',
+            con.Worksr_Subtype__c
+        );
+
+        System.assertEquals(
+            UserInfo.getUserId(),
+            con.OwnerId
+        );
+    }
+}
