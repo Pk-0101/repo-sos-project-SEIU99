@@ -1,0 +1,598 @@
+@IsTest
+public class LocalMemberJobSyncBatchTest {
+
+    /*
+     * Main test:
+     *
+     * Contact has multiple Jobs.
+     * Active Job must be selected over Inactive Job,
+     * even when Inactive Job has newer Last Paid Date.
+     */
+    @IsTest
+    static void testBatchUpdatesContactFromPrimaryJob() {
+
+        /*
+         * Get Local Member Record Type.
+         */
+        Id localMemberRecordTypeId =
+            Schema.SObjectType.Contact
+                .getRecordTypeInfosByDeveloperName()
+                .get('Local_Member')
+                .getRecordTypeId();
+
+
+        /*
+         * Employer used by Primary Job.
+         */
+        Account employer =
+            new Account(
+                Name = 'Test Employer'
+            );
+
+        insert employer;
+
+
+        /*
+         * Worksite used by Primary Job.
+         */
+        CVSR__Worksite__c worksite =
+            new CVSR__Worksite__c(
+                Name = 'Test Worksite',
+                CVSR__PrimaryEmployerAccountId__c =
+                    employer.Id
+            );
+
+        insert worksite;
+
+
+        /*
+         * Create Local Member Contact.
+         */
+        Contact con =
+            new Contact(
+                LastName = 'Test Local Member',
+                RecordTypeId =
+                    localMemberRecordTypeId
+            );
+
+        insert con;
+
+
+        /*
+         * Inactive Job.
+         *
+         * Give this a MORE RECENT Last Paid Date.
+         *
+         * It should still NOT win because Active Job
+         * has priority.
+         */
+        CVSR__Job__c inactiveJob =
+            new CVSR__Job__c(
+
+                CVSR__Worker__c =
+                    con.Id,
+
+                Active__c =
+                    false,
+
+                Last_Paid_Date__c =
+                    Date.today(),
+
+                CVSR__Employer__c =
+                    employer.Id,
+
+                CVSR__Worksite__c =
+                    worksite.Id,
+
+                Employee_ID__c =
+                    'INACTIVE-EMP'
+            );
+
+
+        /*
+         * Active Job.
+         *
+         * Even though its Last Paid Date is older,
+         * it must be selected because Active Job
+         * has priority.
+         */
+        CVSR__Job__c activeJob =
+            new CVSR__Job__c(
+
+                CVSR__Worker__c =
+                    con.Id,
+
+                Active__c =
+                    true,
+
+                Last_Paid_Date__c =
+                    Date.today().addDays(-5),
+
+                CVSR__Employer__c =
+                    employer.Id,
+
+                CVSR__Worksite__c =
+                    worksite.Id,
+
+                Bargaining_Unit__c =
+                    'TEST BU',
+
+                CVSR__JOB_RE_HIRE_DT__c =
+                    Date.today().addYears(-1),
+
+                CVSR__JOB_SENIORITY_DT__c =
+                    Date.today().addYears(-5),
+
+                COPE_Amount__c =
+                    25,
+
+                Effective_Date_COPE__c =
+                    Date.today(),
+
+                Employee_ID__c =
+                    'PRIMARY-EMP',
+
+                HourlyRate__c =
+                    30,
+
+                CVSR__JOB_BASE_SALARY__c =
+                    50000,
+
+                Daily_Hours__c =
+                    8,
+
+                Job_Type__c =
+                    'Full Time',
+
+                Status_Reason_Code__c =
+                    'ACTIVE',
+
+                Worker_Type__c =
+                    'Employee',
+
+                Worker_Sub_Type__c =
+                    'Regular',
+
+                Hire_Date__c =
+                    Date.today().addYears(-5),
+
+                Leave_Notification_Date__c =
+                    Date.today()
+            );
+
+
+        insert new List<CVSR__Job__c>{
+            inactiveJob,
+            activeJob
+        };
+
+
+        /*
+         * Important:
+         *
+         * Include Jobs created during this test
+         * inside the processing window.
+         */
+        Datetime fromDateTime =
+            System.now().addMinutes(-10);
+
+        Datetime toDateTime =
+            System.now().addMinutes(10);
+
+
+        Test.startTest();
+
+
+        Database.executeBatch(
+            new LocalMemberJobSyncBatch(
+                fromDateTime,
+                toDateTime
+            ),
+            100
+        );
+
+
+        Test.stopTest();
+
+
+        /*
+         * Re-query Contact after Batch.
+         */
+        Contact result = [
+            SELECT
+                AccountId,
+                OwnerId,
+                Worksite__c,
+                Bargaining_Unit__c,
+                Rehire_Date__c,
+                Seniority_Date__c,
+                Paid_Through_Date_Start__c,
+                COPE_Amount_Promised__c,
+                COPE_Effective_Date__c,
+                Employee_ID__c,
+                Hourly_Rate__c,
+                Wage_Rate__c,
+                Daily_Hours__c,
+                Job_Type__c,
+                Status_Reason_Code__c,
+                Worker_Type__c,
+                Worksr_Subtype__c,
+                Hire_Date__c,
+                Leave_Notification_Date__c
+            FROM Contact
+            WHERE Id = :con.Id
+        ];
+
+
+        /*
+         * Verify Active Job was selected.
+         */
+        System.assertEquals(
+            'PRIMARY-EMP',
+            result.Employee_ID__c,
+            'Active Job should be selected as Primary.'
+        );
+
+
+        /*
+         * Verify mapping.
+         */
+        System.assertEquals(
+            employer.Id,
+            result.AccountId
+        );
+
+        System.assertEquals(
+            worksite.Id,
+            result.Worksite__c
+        );
+
+        System.assertEquals(
+            'TEST BU',
+            result.Bargaining_Unit__c
+        );
+
+        System.assertEquals(
+            Date.today().addYears(-1),
+            result.Rehire_Date__c
+        );
+
+        System.assertEquals(
+            Date.today().addYears(-5),
+            result.Seniority_Date__c
+        );
+
+        System.assertEquals(
+            Date.today().addDays(-5),
+            result.Paid_Through_Date_Start__c
+        );
+
+        System.assertEquals(
+            25,
+            result.COPE_Amount_Promised__c
+        );
+
+        System.assertEquals(
+            Date.today(),
+            result.COPE_Effective_Date__c
+        );
+
+        System.assertEquals(
+            30,
+            result.Hourly_Rate__c
+        );
+
+        System.assertEquals(
+            50000,
+            result.Wage_Rate__c
+        );
+
+        System.assertEquals(
+            8,
+            result.Daily_Hours__c
+        );
+
+        System.assertEquals(
+            'Full Time',
+            result.Job_Type__c
+        );
+
+        System.assertEquals(
+            'ACTIVE',
+            result.Status_Reason_Code__c
+        );
+
+        System.assertEquals(
+            'Employee',
+            result.Worker_Type__c
+        );
+
+        System.assertEquals(
+            'Regular',
+            result.Worksr_Subtype__c
+        );
+
+        System.assertEquals(
+            Date.today().addYears(-5),
+            result.Hire_Date__c
+        );
+
+        System.assertEquals(
+            Date.today(),
+            result.Leave_Notification_Date__c
+        );
+
+
+        /*
+         * Primary Job Owner -> Contact Owner.
+         */
+        System.assertEquals(
+            activeJob.OwnerId,
+            result.OwnerId
+        );
+    }
+
+
+    /*
+     * Test second important Primary Job rule:
+     *
+     * When all Jobs are inactive,
+     * most recent Last Paid Date wins.
+     */
+    @IsTest
+    static void testMostRecentInactiveJobSelected() {
+
+        Id localMemberRecordTypeId =
+            Schema.SObjectType.Contact
+                .getRecordTypeInfosByDeveloperName()
+                .get('Local_Member')
+                .getRecordTypeId();
+
+
+        Contact con =
+            new Contact(
+                LastName =
+                    'Inactive Job Test',
+                RecordTypeId =
+                    localMemberRecordTypeId
+            );
+
+        insert con;
+
+
+        CVSR__Job__c olderJob =
+            new CVSR__Job__c(
+
+                CVSR__Worker__c =
+                    con.Id,
+
+                Active__c =
+                    false,
+
+                Last_Paid_Date__c =
+                    Date.today().addDays(-30),
+
+                Employee_ID__c =
+                    'OLD-INACTIVE'
+            );
+
+
+        CVSR__Job__c latestJob =
+            new CVSR__Job__c(
+
+                CVSR__Worker__c =
+                    con.Id,
+
+                Active__c =
+                    false,
+
+                Last_Paid_Date__c =
+                    Date.today(),
+
+                Employee_ID__c =
+                    'LATEST-INACTIVE'
+            );
+
+
+        insert new List<CVSR__Job__c>{
+            olderJob,
+            latestJob
+        };
+
+
+        Test.startTest();
+
+
+        Database.executeBatch(
+            new LocalMemberJobSyncBatch(
+                System.now().addMinutes(-10),
+                System.now().addMinutes(10)
+            ),
+            100
+        );
+
+
+        Test.stopTest();
+
+
+        Contact result = [
+            SELECT
+                Employee_ID__c,
+                Paid_Through_Date_Start__c
+            FROM Contact
+            WHERE Id = :con.Id
+        ];
+
+
+        System.assertEquals(
+            'LATEST-INACTIVE',
+            result.Employee_ID__c,
+            'Most recent inactive Job should be Primary.'
+        );
+
+
+        System.assertEquals(
+            Date.today(),
+            result.Paid_Through_Date_Start__c
+        );
+    }
+
+
+    /*
+     * Test single Job rule.
+     *
+     * One inactive Job must still become Primary.
+     */
+    @IsTest
+    static void testSingleInactiveJobSelected() {
+
+        Id localMemberRecordTypeId =
+            Schema.SObjectType.Contact
+                .getRecordTypeInfosByDeveloperName()
+                .get('Local_Member')
+                .getRecordTypeId();
+
+
+        Contact con =
+            new Contact(
+                LastName =
+                    'Single Job Test',
+
+                RecordTypeId =
+                    localMemberRecordTypeId
+            );
+
+        insert con;
+
+
+        CVSR__Job__c job =
+            new CVSR__Job__c(
+
+                CVSR__Worker__c =
+                    con.Id,
+
+                Active__c =
+                    false,
+
+                Last_Paid_Date__c =
+                    Date.today(),
+
+                Employee_ID__c =
+                    'SINGLE-JOB',
+
+                Job_Type__c =
+                    'Single Test'
+            );
+
+        insert job;
+
+
+        Test.startTest();
+
+
+        Database.executeBatch(
+            new LocalMemberJobSyncBatch(
+                System.now().addMinutes(-10),
+                System.now().addMinutes(10)
+            ),
+            100
+        );
+
+
+        Test.stopTest();
+
+
+        Contact result = [
+            SELECT
+                Employee_ID__c,
+                Job_Type__c
+            FROM Contact
+            WHERE Id = :con.Id
+        ];
+
+
+        System.assertEquals(
+            'SINGLE-JOB',
+            result.Employee_ID__c
+        );
+
+
+        System.assertEquals(
+            'Single Test',
+            result.Job_Type__c
+        );
+    }
+
+
+    /*
+     * Negative test:
+     *
+     * Local Member Contact without changed Job
+     * should not be processed.
+     */
+    @IsTest
+    static void testNoMatchingJobs() {
+
+        Id localMemberRecordTypeId =
+            Schema.SObjectType.Contact
+                .getRecordTypeInfosByDeveloperName()
+                .get('Local_Member')
+                .getRecordTypeId();
+
+
+        Contact con =
+            new Contact(
+                LastName =
+                    'No Job Test',
+
+                RecordTypeId =
+                    localMemberRecordTypeId,
+
+                Employee_ID__c =
+                    'ORIGINAL'
+            );
+
+        insert con;
+
+
+        /*
+         * Processing window is in the past.
+         *
+         * Therefore this Contact should not
+         * enter the Batch.
+         */
+        Datetime toDateTime =
+            System.now().addDays(-5);
+
+        Datetime fromDateTime =
+            System.now().addDays(-10);
+
+
+        Test.startTest();
+
+
+        Database.executeBatch(
+            new LocalMemberJobSyncBatch(
+                fromDateTime,
+                toDateTime
+            ),
+            100
+        );
+
+
+        Test.stopTest();
+
+
+        Contact result = [
+            SELECT Employee_ID__c
+            FROM Contact
+            WHERE Id = :con.Id
+        ];
+
+
+        System.assertEquals(
+            'ORIGINAL',
+            result.Employee_ID__c
+        );
+    }
+}
