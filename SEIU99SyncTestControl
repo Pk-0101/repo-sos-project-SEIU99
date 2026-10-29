@@ -1,0 +1,5 @@
+public class SEIU99SyncTestControl {
+
+    @TestVisible
+    public static Boolean disableBatchChaining = false;
+}
