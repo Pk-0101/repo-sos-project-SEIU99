@@ -1,0 +1,16 @@
+global class LocalMemberJobSyncScheduler implements Schedulable {
+
+    global void execute(SchedulableContext sc) {
+
+        Datetime toDateTime = System.now();
+        Datetime fromDateTime = toDateTime.addHours(-26);
+
+        Database.executeBatch(
+            new WorksiteOwnerToJobBatch(
+                fromDateTime,
+                toDateTime
+            ),
+            200
+        );
+    }
+}
