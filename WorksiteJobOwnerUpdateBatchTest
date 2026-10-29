@@ -1,0 +1,292 @@
+@IsTest
+private class WorksiteJobOwnerUpdateBatchTest {
+
+    @IsTest
+    static void testJobOwnerUpdatedFromWorksite() {
+
+        // Create two DIFFERENT users
+        User worksiteOwner =
+            SEIU99SyncTestDataFactory.createUser(
+                'wsowner'
+            );
+
+        User jobOwner =
+            SEIU99SyncTestDataFactory.createUser(
+                'jobowner'
+            );
+
+
+        Account employer =
+            SEIU99SyncTestDataFactory.createAccount(
+                'Normal Employer'
+            );
+
+
+        CVSR__Worksite__c ws =
+            SEIU99SyncTestDataFactory.createWorksite(
+                'Normal Worksite',
+                employer.Id
+            );
+
+
+        // Worksite Owner = User A
+        ws.OwnerId = worksiteOwner.Id;
+        update ws;
+
+
+        // Jobs Owner = User B
+        List<CVSR__Job__c> jobs =
+            new List<CVSR__Job__c>();
+
+
+        for (Integer i = 0; i < 10; i++) {
+
+            jobs.add(
+                new CVSR__Job__c(
+                    CVSR__Worksite__c = ws.Id,
+                    OwnerId = jobOwner.Id
+                )
+            );
+        }
+
+        insert jobs;
+
+
+        /*
+         * Verify test data BEFORE Batch.
+         */
+        CVSR__Job__c beforeJob = [
+            SELECT
+                Id,
+                OwnerId,
+                CVSR__Worksite__c,
+                CVSR__Worksite__r.OwnerId
+            FROM CVSR__Job__c
+            WHERE Id = :jobs[0].Id
+        ];
+
+
+        System.assertNotEquals(
+            beforeJob.OwnerId,
+            beforeJob.CVSR__Worksite__r.OwnerId,
+            'Before Batch, Job Owner must be different from Worksite Owner.'
+        );
+
+
+        SEIU99SyncTestControl.disableBatchChaining =
+            true;
+
+
+        Test.startTest();
+
+
+        Database.executeBatch(
+            new WorksiteJobOwnerUpdateBatch(
+                new Set<Id>{ ws.Id },
+                System.now().addMinutes(-10),
+                System.now().addMinutes(10)
+            ),
+            100
+        );
+
+
+        Test.stopTest();
+
+
+        /*
+         * Verify Jobs AFTER Batch.
+         */
+        List<CVSR__Job__c> results = [
+            SELECT
+                Id,
+                OwnerId
+            FROM CVSR__Job__c
+            WHERE CVSR__Worksite__c = :ws.Id
+        ];
+
+
+        System.assertEquals(
+            10,
+            results.size()
+        );
+
+
+        for (CVSR__Job__c resultJob : results) {
+
+            System.assertEquals(
+                worksiteOwner.Id,
+                resultJob.OwnerId,
+                'Job Owner should match Worksite Owner.'
+            );
+        }
+    }
+
+
+    @IsTest
+    static void testNoUnnecessaryOwnerUpdate() {
+
+        Account employer =
+            SEIU99SyncTestDataFactory.createAccount(
+                'No Change Employer'
+            );
+
+
+        CVSR__Worksite__c ws =
+            SEIU99SyncTestDataFactory.createWorksite(
+                'No Change Worksite',
+                employer.Id
+            );
+
+
+        CVSR__Job__c job =
+            new CVSR__Job__c(
+                CVSR__Worksite__c = ws.Id,
+                OwnerId = ws.OwnerId
+            );
+
+        insert job;
+
+
+        SEIU99SyncTestControl.disableBatchChaining =
+            true;
+
+
+        Test.startTest();
+
+
+        Database.executeBatch(
+            new WorksiteJobOwnerUpdateBatch(
+                new Set<Id>{ ws.Id },
+                System.now().addMinutes(-10),
+                System.now().addMinutes(10)
+            ),
+            100
+        );
+
+
+        Test.stopTest();
+
+
+        job = [
+            SELECT OwnerId
+            FROM CVSR__Job__c
+            WHERE Id = :job.Id
+        ];
+
+
+        System.assertEquals(
+            ws.OwnerId,
+            job.OwnerId
+        );
+    }
+
+
+    @IsTest
+    static void testExecuteWithEmptyJobList() {
+
+        WorksiteJobOwnerUpdateBatch batch =
+            new WorksiteJobOwnerUpdateBatch(
+                new Set<Id>(),
+                System.now().addMinutes(-10),
+                System.now().addMinutes(10)
+            );
+
+
+        Test.startTest();
+
+        batch.execute(
+            null,
+            new List<CVSR__Job__c>()
+        );
+
+        Test.stopTest();
+
+
+        System.assertEquals(
+            true,
+            true
+        );
+    }
+
+
+    @IsTest
+    static void testExecuteJobWithoutWorksite() {
+
+        CVSR__Job__c job =
+            new CVSR__Job__c();
+
+
+        WorksiteJobOwnerUpdateBatch batch =
+            new WorksiteJobOwnerUpdateBatch(
+                new Set<Id>(),
+                System.now().addMinutes(-10),
+                System.now().addMinutes(10)
+            );
+
+
+        Test.startTest();
+
+        batch.execute(
+            null,
+            new List<CVSR__Job__c>{ job }
+        );
+
+        Test.stopTest();
+
+
+        System.assertEquals(
+            null,
+            job.CVSR__Worksite__c
+        );
+    }
+
+
+    @IsTest
+    static void testNoJobsForWorksite() {
+
+        Account employer =
+            SEIU99SyncTestDataFactory.createAccount(
+                'Empty Employer'
+            );
+
+
+        CVSR__Worksite__c ws =
+            SEIU99SyncTestDataFactory.createWorksite(
+                'Empty Worksite',
+                employer.Id
+            );
+
+
+        SEIU99SyncTestControl.disableBatchChaining =
+            true;
+
+
+        Test.startTest();
+
+
+        Database.executeBatch(
+            new WorksiteJobOwnerUpdateBatch(
+                new Set<Id>{ ws.Id },
+                System.now().addMinutes(-10),
+                System.now().addMinutes(10)
+            ),
+            100
+        );
+
+
+        Test.stopTest();
+
+
+        Integer countJobs = [
+            SELECT COUNT()
+            FROM CVSR__Job__c
+            WHERE CVSR__Worksite__c = :ws.Id
+        ];
+
+
+        System.assertEquals(
+            0,
+            countJobs
+        );
+    }
+}
