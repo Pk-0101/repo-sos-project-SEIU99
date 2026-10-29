@@ -1,0 +1,58 @@
+public class SEIU99JobContactSyncService {
+
+    public static Map<Id, CVSR__Job__c> selectPrimaryJobs(
+        List<CVSR__Job__c> jobs
+    ) {
+
+        Map<Id, CVSR__Job__c> result =
+            new Map<Id, CVSR__Job__c>();
+
+        for (CVSR__Job__c job : jobs) {
+
+            if (job.CVSR__Worker__c == null) {
+                continue;
+            }
+
+            if (!result.containsKey(job.CVSR__Worker__c)) {
+                result.put(
+                    job.CVSR__Worker__c,
+                    job
+                );
+            }
+        }
+
+        return result;
+    }
+
+
+    public static void mapJobToContact(
+        Contact con,
+        CVSR__Job__c job
+    ) {
+
+        con.AccountId = job.CVSR__Employer__c;
+        con.Worksite__c = job.CVSR__Worksite__c;
+        con.Bargaining_Unit__c = job.Bargaining_Unit__c;
+        con.Rehire_Date__c = job.CVSR__JOB_RE_HIRE_DT__c;
+        con.Seniority_Date__c = job.CVSR__JOB_SENIORITY_DT__c;
+        con.Paid_Through_Date_Start__c = job.Last_Paid_Date__c;
+        con.COPE_Amount_Promised__c = job.COPE_Amount__c;
+        con.COPE_Effective_Date__c = job.Effective_Date_COPE__c;
+        con.Job_Class__c = job.Job_Classification__c;
+        con.Employee_ID__c = job.Employee_ID__c;
+        con.Hourly_Rate__c = job.HourlyRate__c;
+        con.Wage_Rate__c = job.CVSR__JOB_BASE_SALARY__c;
+        con.Daily_Hours__c = job.Daily_Hours__c;
+        con.Job_Type__c = job.Job_Type__c;
+        con.Status_Reason_Code__c = job.Status_Reason_Code__c;
+        con.Worker_Type__c = job.Worker_Type__c;
+        con.Worksr_Subtype__c = job.Worker_Sub_Type__c;
+        con.Hire_Date__c = job.Hire_Date__c;
+        con.Leave_Notification_Date__c =
+            job.Leave_Notification_Date__c;
+
+        if (job.OwnerId != null) {
+            con.OwnerId = job.OwnerId;
+        }
+    }
+}
