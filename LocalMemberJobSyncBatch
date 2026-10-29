@@ -1,0 +1,219 @@
+public class LocalMemberJobSyncBatch
+    implements Database.Batchable<SObject> {
+
+    private Datetime fromDateTime;
+    private Datetime toDateTime;
+
+
+    public LocalMemberJobSyncBatch(
+        Datetime fromDateTime,
+        Datetime toDateTime
+    ) {
+        this.fromDateTime = fromDateTime;
+        this.toDateTime   = toDateTime;
+    }
+
+
+    public Database.QueryLocator start(
+        Database.BatchableContext bc
+    ) {
+
+        Id localMemberRecordTypeId =
+            Schema.SObjectType.Contact
+                .getRecordTypeInfosByDeveloperName()
+                .get('Local_Member')
+                .getRecordTypeId();
+
+        /*
+         * Process only Local Member Contacts having at least
+         * one Job modified during the processing window.
+         */
+        return Database.getQueryLocator([
+            SELECT
+                Id,
+                AccountId,
+                OwnerId,
+                Worksite__c,
+                Bargaining_Unit__c,
+                Rehire_Date__c,
+                Seniority_Date__c,
+                Paid_Through_Date_Start__c,
+                COPE_Amount_Promised__c,
+                COPE_Effective_Date__c,
+                Job_Class__c,
+                Employee_ID__c,
+                Hourly_Rate__c,
+                Wage_Rate__c,
+                Daily_Hours__c,
+                Job_Type__c,
+                Status_Reason_Code__c,
+                Worker_Type__c,
+                Worksr_Subtype__c,
+                Hire_Date__c,
+                Leave_Notification_Date__c
+            FROM Contact
+            WHERE RecordTypeId = :localMemberRecordTypeId
+            AND Id IN (
+                SELECT CVSR__Worker__c
+                FROM CVSR__Job__c
+                WHERE CVSR__Worker__c != null
+                AND LastModifiedDate >= :fromDateTime
+                AND LastModifiedDate < :toDateTime
+            )
+        ]);
+    }
+
+
+    public void execute(
+        Database.BatchableContext bc,
+        List<Contact> contacts
+    ) {
+
+        if (contacts.isEmpty()) {
+            return;
+        }
+
+        Set<Id> contactIds =
+            new Set<Id>();
+
+        for (Contact con : contacts) {
+            contactIds.add(con.Id);
+        }
+
+
+        /*
+         * Get ALL Jobs belonging to affected Contacts.
+         *
+         * Do NOT apply LastModifiedDate here.
+         */
+        List<CVSR__Job__c> jobs = [
+            SELECT
+                Id,
+                OwnerId,
+                CVSR__Worker__c,
+                Active__c,
+                Last_Paid_Date__c,
+                LastModifiedDate,
+
+                CVSR__Employer__c,
+                CVSR__Worksite__c,
+
+                Bargaining_Unit__c,
+                CVSR__JOB_RE_HIRE_DT__c,
+                CVSR__JOB_SENIORITY_DT__c,
+                COPE_Amount__c,
+                Effective_Date_COPE__c,
+                Job_Classification__c,
+                Employee_ID__c,
+                HourlyRate__c,
+                CVSR__JOB_BASE_SALARY__c,
+                Daily_Hours__c,
+                Job_Type__c,
+                Status_Reason_Code__c,
+                Worker_Type__c,
+                Worker_Sub_Type__c,
+                Hire_Date__c,
+                Leave_Notification_Date__c
+
+            FROM CVSR__Job__c
+
+            WHERE CVSR__Worker__c IN :contactIds
+
+            ORDER BY
+                CVSR__Worker__c,
+                Active__c DESC,
+                Last_Paid_Date__c DESC NULLS LAST,
+                LastModifiedDate DESC,
+                Id DESC
+        ];
+
+
+        Map<Id, CVSR__Job__c> primaryJobByContact =
+    SEIU99JobContactSyncService.selectPrimaryJobs(jobs);
+
+
+        List<Contact> contactsToUpdate =
+            new List<Contact>();
+
+
+        for (Contact con : contacts) {
+
+            CVSR__Job__c primaryJob =
+                primaryJobByContact.get(
+                    con.Id
+                );
+
+            if (primaryJob == null) {
+                continue;
+            }
+
+            SEIU99JobContactSyncService.mapJobToContact(
+                    con,
+                    primaryJob
+                );
+
+            contactsToUpdate.add(con);
+        }
+
+
+        if (!contactsToUpdate.isEmpty()) {
+
+            Database.SaveResult[] results =
+                Database.update(
+                    contactsToUpdate,
+                    false
+                );
+
+            logErrors(
+                results,
+                contactsToUpdate
+            );
+        }
+    }
+
+
+    public void finish(
+        Database.BatchableContext bc
+    ) {
+
+        System.debug(
+            LoggingLevel.INFO,
+            'Job -> Contact synchronization completed. '
+            + 'From=' + fromDateTime
+            + ', To=' + toDateTime
+        );
+
+        /*
+         * This is where we should eventually update the
+         * persistent "Last Successful Run" checkpoint.
+         */
+    }
+
+
+    private static void logErrors(
+        Database.SaveResult[] results,
+        List<Contact> contacts
+    ) {
+
+        for (Integer i = 0; i < results.size(); i++) {
+
+            if (!results[i].isSuccess()) {
+
+                for (
+                    Database.Error errorRecord :
+                    results[i].getErrors()
+                ) {
+
+                    System.debug(
+                        LoggingLevel.ERROR,
+                        'Job -> Contact sync failed. '
+                        + 'ContactId='
+                        + contacts[i].Id
+                        + ', Error='
+                        + errorRecord.getMessage()
+                    );
+                }
+            }
+        }
+    }
+}
