@@ -1,0 +1,129 @@
+@IsTest
+private class ChangedJobOwnerSyncBatchTest {
+
+    @IsTest
+    static void testNormalJobOwnerUpdated() {
+
+        Id worksiteOwnerId =
+            UserInfo.getUserId();
+
+        User otherOwner =
+            SEIU99SyncTestDataFactory.createUser('normaljob');
+
+        System.runAs(otherOwner) {
+
+            Account employer =
+                SEIU99SyncTestDataFactory.createAccount('Normal Employer');
+
+            CVSR__Worksite__c ws =
+                SEIU99SyncTestDataFactory.createWorksite(
+                        'Normal Worksite',
+                        employer.Id
+                    );
+
+            ws.OwnerId = worksiteOwnerId;
+            update ws;
+
+            CVSR__Job__c job =
+                new CVSR__Job__c(
+                    CVSR__Worksite__c = ws.Id,
+                    OwnerId = otherOwner.Id
+                );
+
+            insert job;
+
+            SEIU99SyncTestControl.disableBatchChaining =
+                true;
+
+            Test.startTest();
+
+            Database.executeBatch(
+                new ChangedJobOwnerSyncBatch(
+                    System.now().addMinutes(-10),
+                    System.now().addMinutes(10)
+                ),
+                100
+            );
+
+            Test.stopTest();
+
+            job = [
+                SELECT OwnerId
+                FROM CVSR__Job__c
+                WHERE Id = :job.Id
+            ];
+
+            System.assertEquals(
+                worksiteOwnerId,
+                job.OwnerId,
+                'Normal Job should receive Worksite Owner.'
+            );
+        }
+    }
+
+
+    @IsTest
+    static void testChildcareJobOwnerNotChanged() {
+
+        Id worksiteOwnerId =
+            UserInfo.getUserId();
+
+        User manualOwner =
+            SEIU99SyncTestDataFactory.createUser('childjob');
+
+        System.runAs(manualOwner) {
+
+            Account childcare =
+                SEIU99SyncTestDataFactory.createAccount(
+                        'Childcare Providers'
+                    );
+
+            CVSR__Worksite__c ws =
+                SEIU99SyncTestDataFactory.createWorksite(
+                        'Childcare Worksite',
+                        childcare.Id
+                    );
+
+            ws.OwnerId = worksiteOwnerId;
+            update ws;
+
+            CVSR__Job__c job =
+                new CVSR__Job__c(
+                    CVSR__Worksite__c = ws.Id,
+                    OwnerId = manualOwner.Id
+                );
+
+            insert job;
+
+            Id originalOwner =
+                job.OwnerId;
+
+            SEIU99SyncTestControl.disableBatchChaining =
+                true;
+
+            Test.startTest();
+
+            Database.executeBatch(
+                new ChangedJobOwnerSyncBatch(
+                    System.now().addMinutes(-10),
+                    System.now().addMinutes(10)
+                ),
+                100
+            );
+
+            Test.stopTest();
+
+            job = [
+                SELECT OwnerId
+                FROM CVSR__Job__c
+                WHERE Id = :job.Id
+            ];
+
+            System.assertEquals(
+                originalOwner,
+                job.OwnerId,
+                'Childcare Job Owner must remain unchanged.'
+            );
+        }
+    }
+}
