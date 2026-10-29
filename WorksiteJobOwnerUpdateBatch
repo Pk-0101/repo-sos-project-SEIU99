@@ -1,0 +1,190 @@
+public class WorksiteJobOwnerUpdateBatch 
+    implements Database.Batchable<SObject> {
+
+    private Set<Id> worksiteIds;
+
+    private Datetime fromDateTime;
+    private Datetime toDateTime;
+
+
+    public WorksiteJobOwnerUpdateBatch(
+        Set<Id> worksiteIds,
+        Datetime fromDateTime,
+        Datetime toDateTime
+    ) {
+
+        this.worksiteIds  = worksiteIds;
+        this.fromDateTime = fromDateTime;
+        this.toDateTime   = toDateTime;
+    }
+
+
+    public Database.QueryLocator start(
+        Database.BatchableContext bc
+    ) {
+
+        /*
+         * Jobs are now the Batch scope.
+         *
+         * Example:
+         *
+         * 21,100 Jobs
+         *
+         * Batch size 100:
+         *
+         * Transaction 1 = 100 Jobs
+         * Transaction 2 = 100 Jobs
+         * Transaction 3 = 100 Jobs
+         * ...
+         *
+         * This prevents 18,000+ Job updates
+         * from occurring in one transaction.
+         */
+        return Database.getQueryLocator([
+            SELECT
+                Id,
+                OwnerId,
+                CVSR__Worksite__c,
+                CVSR__Worksite__r.OwnerId
+            FROM CVSR__Job__c
+            WHERE CVSR__Worksite__c IN :worksiteIds
+        ]);
+    }
+
+
+    public void execute(
+        Database.BatchableContext bc,
+        List<CVSR__Job__c> jobs
+    ) {
+
+        if (jobs.isEmpty()) {
+            return;
+        }
+
+
+        List<CVSR__Job__c> jobsToUpdate =
+            new List<CVSR__Job__c>();
+
+
+        for (CVSR__Job__c job : jobs) {
+
+            if (
+                job.CVSR__Worksite__c == null ||
+                job.CVSR__Worksite__r == null
+            ) {
+                continue;
+            }
+
+
+            Id expectedOwner =
+                job.CVSR__Worksite__r.OwnerId;
+
+
+            /*
+             * Update only when Owner is different.
+             *
+             * This avoids unnecessary DML.
+             */
+            if (
+                expectedOwner != null &&
+                job.OwnerId != expectedOwner
+            ) {
+
+                jobsToUpdate.add(
+                    new CVSR__Job__c(
+                        Id      = job.Id,
+                        OwnerId = expectedOwner
+                    )
+                );
+            }
+        }
+
+
+        System.debug(
+            LoggingLevel.INFO,
+            'Jobs in current scope = '
+            + jobs.size()
+        );
+
+        System.debug(
+            LoggingLevel.INFO,
+            'Jobs requiring Owner update = '
+            + jobsToUpdate.size()
+        );
+
+
+        if (!jobsToUpdate.isEmpty()) {
+
+            Database.SaveResult[] results =
+                Database.update(
+                    jobsToUpdate,
+                    false
+                );
+
+
+            logErrors(
+                results,
+                jobsToUpdate
+            );
+        }
+    }
+
+
+    public void finish(
+        Database.BatchableContext bc
+    ) {
+
+        System.debug(
+            LoggingLevel.INFO,
+            'Worksite -> Job Owner synchronization completed.'
+        );
+
+
+        if (Test.isRunningTest() &&
+    SEIU99SyncTestControl.disableBatchChaining) {
+    return;
+}
+        
+        /*
+         * Continue existing process.
+         *
+         * This handles Jobs directly inserted/updated
+         * by the weekly client file.
+         */
+        Database.executeBatch(
+            new ChangedJobOwnerSyncBatch(
+                fromDateTime,
+                toDateTime
+            ),
+            100
+        );
+    }
+
+
+    private static void logErrors(
+        Database.SaveResult[] results,
+        List<CVSR__Job__c> records
+    ) {
+
+        for (Integer i = 0; i < results.size(); i++) {
+
+            if (!results[i].isSuccess()) {
+
+                for (
+                    Database.Error errorRecord :
+                    results[i].getErrors()
+                ) {
+
+                    System.debug(
+                        LoggingLevel.ERROR,
+                        'Worksite -> Job Owner update failed. '
+                        + 'JobId='
+                        + records[i].Id
+                        + ', Error='
+                        + errorRecord.getMessage()
+                    );
+                }
+            }
+        }
+    }
+}
