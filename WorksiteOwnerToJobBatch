@@ -1,0 +1,139 @@
+public class WorksiteOwnerToJobBatch   implements Database.Batchable<SObject>,
+               Database.Stateful {
+
+    private Datetime fromDateTime;
+    private Datetime toDateTime;
+
+    private static final String CHILDCARE_ACCOUNT =
+        'Childcare Providers';
+
+    /*
+     * Store eligible changed Worksite IDs.
+     *
+     * Database.Stateful is required because execute()
+     * can run multiple times and we need these IDs
+     * in finish().
+     */
+    private Set<Id> eligibleWorksiteIds =
+        new Set<Id>();
+
+
+    public WorksiteOwnerToJobBatch(
+        Datetime fromDateTime,
+        Datetime toDateTime
+    ) {
+        this.fromDateTime = fromDateTime;
+        this.toDateTime   = toDateTime;
+    }
+
+
+    public Database.QueryLocator start(
+        Database.BatchableContext bc
+    ) {
+
+        /*
+         * Find Worksites inserted/updated
+         * during the processing window.
+         */
+        return Database.getQueryLocator([
+            SELECT
+                Id,
+                OwnerId,
+                CVSR__PrimaryEmployerAccountId__c,
+                CVSR__PrimaryEmployerAccountId__r.Name
+            FROM CVSR__Worksite__c
+            WHERE LastModifiedDate >= :fromDateTime
+            AND LastModifiedDate < :toDateTime
+        ]);
+    }
+
+
+    public void execute(
+        Database.BatchableContext bc,
+        List<CVSR__Worksite__c> worksites
+    ) {
+
+        /*
+         * IMPORTANT:
+         
+         * Do NOT query/update Jobs here.
+         
+         * One Worksite can have thousands of Jobs.
+         * Querying all Jobs here caused:
+         
+         * Too many DML rows: 10001
+         
+         * We only collect eligible Worksite IDs.
+         */
+        for (CVSR__Worksite__c worksite : worksites) {
+
+            Boolean isChildcare =
+                worksite.CVSR__PrimaryEmployerAccountId__c != null
+                &&
+                worksite.CVSR__PrimaryEmployerAccountId__r != null
+                &&
+                worksite.CVSR__PrimaryEmployerAccountId__r.Name ==
+                    CHILDCARE_ACCOUNT;
+
+            /*
+             * Childcare Providers are manually
+             * maintained by client.
+             */
+            if (isChildcare) {
+                continue;
+            }
+
+            eligibleWorksiteIds.add(
+                worksite.Id
+            );
+        }
+    }
+
+
+    public void finish(
+        Database.BatchableContext bc
+    ) {
+
+    //    System.debug(LoggingLevel.INFO,'Eligible changed Worksites = '+ eligibleWorksiteIds.size());
+
+	        if (Test.isRunningTest() &&
+    SEIU99SyncTestControl.disableBatchChaining) {
+    return;
+}
+
+        
+        
+        /*
+         * If changed non-Childcare Worksites exist,
+         * start the Job-level Batch.
+         */
+        if (!eligibleWorksiteIds.isEmpty()) {
+
+            Database.executeBatch(
+                new WorksiteJobOwnerUpdateBatch(
+                    eligibleWorksiteIds,
+                    fromDateTime,
+                    toDateTime
+                ),
+                100
+            );
+
+        } else {
+
+            /*
+             * No eligible Worksites.
+             *
+             * Still continue to Batch 2 because
+             * Jobs may have been inserted/updated
+             * directly by the weekly client file.
+             */
+            Database.executeBatch(
+                new ChangedJobOwnerSyncBatch(
+                    fromDateTime,
+                    toDateTime
+                ),
+                100
+            );
+        }
+    }
+}
