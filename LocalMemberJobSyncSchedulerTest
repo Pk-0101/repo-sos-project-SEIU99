@@ -1,0 +1,84 @@
+@IsTest
+private class LocalMemberJobSyncSchedulerTest {
+
+    @IsTest
+    static void testSchedulerExecute() {
+
+        /*
+         * Prevent downstream Batch chaining
+         * during the unit test.
+         */
+        SEIU99SyncTestControl.disableBatchChaining = true;
+
+        Test.startTest();
+
+        /*
+         * Call Scheduler execute() directly.
+         *
+         * This covers:
+         * - System.now()
+         * - 26-hour processing window
+         * - WorksiteOwnerToJobBatch creation
+         * - Database.executeBatch()
+         */
+        LocalMemberJobSyncScheduler scheduler =
+            new LocalMemberJobSyncScheduler();
+
+        scheduler.execute(null);
+
+        Test.stopTest();
+
+        /*
+         * Confirm WorksiteOwnerToJobBatch
+         * was submitted.
+         */
+        List<AsyncApexJob> jobs = [
+            SELECT
+                Id,
+                ApexClass.Name,
+                JobType,
+                Status
+            FROM AsyncApexJob
+            WHERE ApexClass.Name =
+                'WorksiteOwnerToJobBatch'
+        ];
+
+        System.assert(
+            !jobs.isEmpty(),
+            'Scheduler should submit WorksiteOwnerToJobBatch.'
+        );
+    }
+
+
+    @IsTest
+    static void testSchedulerCanBeScheduled() {
+
+        SEIU99SyncTestControl.disableBatchChaining = true;
+
+        /*
+         * Future date so we're only testing
+         * that Salesforce accepts the schedule.
+         */
+        String cronExpression =
+            '0 0 2 15 6 ? 2099';
+
+
+        Test.startTest();
+
+        String scheduledJobId =
+            System.schedule(
+                'Test Daily Worksite Job Contact Sync',
+                cronExpression,
+                new LocalMemberJobSyncScheduler()
+            );
+
+        Test.stopTest();
+
+
+        System.assertNotEquals(
+            null,
+            scheduledJobId,
+            'Scheduler should be scheduled successfully.'
+        );
+    }
+}
