@@ -1,0 +1,162 @@
+public class ChangedJobOwnerSyncBatch
+    implements Database.Batchable<SObject> {
+
+    private Datetime fromDateTime;
+    private Datetime toDateTime;
+
+    private static final String CHILDCARE_ACCOUNT =
+        'Childcare Providers';
+
+    public ChangedJobOwnerSyncBatch(
+        Datetime fromDateTime,
+        Datetime toDateTime
+    ) {
+        this.fromDateTime = fromDateTime;
+        this.toDateTime   = toDateTime;
+    }
+
+
+    public Database.QueryLocator start(
+        Database.BatchableContext bc
+    ) {
+
+        return Database.getQueryLocator([
+            SELECT
+                Id,
+                OwnerId,
+                CVSR__Worker__c,
+                CVSR__Worksite__c,
+                CVSR__Worksite__r.OwnerId,
+                CVSR__Worksite__r.CVSR__PrimaryEmployerAccountId__c,
+                CVSR__Worksite__r.CVSR__PrimaryEmployerAccountId__r.Name
+            FROM CVSR__Job__c
+            WHERE LastModifiedDate >= :fromDateTime
+            AND LastModifiedDate < :toDateTime
+            AND CVSR__Worksite__c != null
+        ]);
+    }
+
+
+    public void execute(
+        Database.BatchableContext bc,
+        List<CVSR__Job__c> jobs
+    ) {
+
+        List<CVSR__Job__c> jobsToUpdate =
+            new List<CVSR__Job__c>();
+
+        for (CVSR__Job__c job : jobs) {
+
+            if (
+                job.CVSR__Worksite__r == null
+            ) {
+                continue;
+            }
+
+            Boolean isChildcare =
+                job.CVSR__Worksite__r
+                    .CVSR__PrimaryEmployerAccountId__c != null
+                &&
+                job.CVSR__Worksite__r
+                    .CVSR__PrimaryEmployerAccountId__r != null
+                &&
+                job.CVSR__Worksite__r
+                    .CVSR__PrimaryEmployerAccountId__r.Name ==
+                    CHILDCARE_ACCOUNT;
+
+            /*
+             * Client manually controls Childcare Job Owners.
+             */
+            if (isChildcare) {
+                continue;
+            }
+
+            Id worksiteOwner =
+                job.CVSR__Worksite__r.OwnerId;
+
+            if (
+                worksiteOwner != null &&
+                job.OwnerId != worksiteOwner
+            ) {
+
+                jobsToUpdate.add(
+                    new CVSR__Job__c(
+                        Id      = job.Id,
+                        OwnerId = worksiteOwner
+                    )
+                );
+            }
+        }
+
+        if (!jobsToUpdate.isEmpty()) {
+
+            Database.SaveResult[] results =
+                Database.update(
+                    jobsToUpdate,
+                    false
+                );
+
+            logErrors(
+                results,
+                jobsToUpdate
+            );
+        }
+    }
+
+
+    public void finish(
+        Database.BatchableContext bc
+    ) {
+
+        /*
+         * IMPORTANT:
+         *
+         * Batch 1 and Batch 2 may themselves update Job.OwnerId,
+         * changing Job.LastModifiedDate beyond the original toDateTime.
+         *
+         * Therefore we capture a new upper boundary here.
+         */
+        Datetime contactSyncToTime =
+            System.now();
+
+        if (Test.isRunningTest() &&
+    SEIU99SyncTestControl.disableBatchChaining) {
+    return;
+}
+        
+        Database.executeBatch(
+            new LocalMemberJobSyncBatch(
+                fromDateTime,
+                contactSyncToTime
+            ),
+            100
+        );
+    }
+
+
+    private static void logErrors(
+        Database.SaveResult[] results,
+        List<CVSR__Job__c> records
+    ) {
+
+        for (Integer i = 0; i < results.size(); i++) {
+
+            if (!results[i].isSuccess()) {
+
+                for (
+                    Database.Error errorRecord :
+                    results[i].getErrors()
+                ) {
+
+                    System.debug(
+                        LoggingLevel.ERROR,
+                        'Changed Job Owner sync failed. '
+                        + 'JobId=' + records[i].Id
+                        + ', Error='
+                        + errorRecord.getMessage()
+                    );
+                }
+            }
+        }
+    }
+}
